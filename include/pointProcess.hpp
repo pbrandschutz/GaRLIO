@@ -31,8 +31,8 @@ using std::cos;
 using std::sin;
 
 enum TIME_UNIT {SEC = 0, MS = 1, US = 2, NS = 3};
-enum LID_TYPE {AVIA, HEASI};
-enum RAR_TYPE {OCULII_1, OCULII_2};
+enum LID_TYPE {AVIA, HEASI, LIVOX_PC2};
+enum RAR_TYPE {OCULII_1, OCULII_2, BOSCH};
 enum Feature {Nor, Poss_Plane, Real_Plane, Edge_Jump, Edge_Plane, Wire, ZeroPoint};
 enum Surround {Prev, Next};
 enum E_jump {Nr_nor, Nr_zero, Nr_180, Nr_inf, Nr_blind};
@@ -92,6 +92,31 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(hesai_ros::Point,
     (std::uint16_t, ring, ring)
 )
 
+namespace livox_pc2 {
+
+// Livox drivers publishing sensor_msgs/PointCloud2 (e.g. Mid360) use
+// x,y,z,intensity,tag,line,timestamp fields -- there is no 'ring' field
+// (that's a Velodyne/Hesai convention), so a dedicated point type avoids
+// the "Failed to find match for field 'ring'" PCL warning.
+struct EIGEN_ALIGN16 Point {
+    PCL_ADD_POINT4D;
+    float intensity;
+    double timestamp;
+    uint8_t tag;
+    uint8_t line;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}
+POINT_CLOUD_REGISTER_POINT_STRUCT(livox_pc2::Point,
+    (float, x, x)
+    (float, y, y)
+    (float, z, z)
+    (float, intensity, intensity)
+    (double, timestamp, timestamp)
+    (std::uint8_t, tag, tag)
+    (std::uint8_t, line, line)
+)
+
 namespace ouster_ros {
 
 struct EIGEN_ALIGN16 Point {
@@ -142,8 +167,10 @@ public:
 private:
     void radar_handler1(const sensor_msgs::PointCloud::ConstPtr& msg);
     void radar_handler2(const sensor_msgs::PointCloud2::ConstPtr &msg);
+    void radar_handler3(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg);
     void hesai_handler(const sensor_msgs::PointCloud2::ConstPtr &msg);
+    void livox_pc2_handler(const sensor_msgs::PointCloud2::ConstPtr &msg);
     void give_feature(pcl::PointCloud<PointType> &pl, std::vector<orgtype> &types, pcl::PointCloud<PointType> &pl_surf,
                       pcl::PointCloud<PointType> &pl_corn);
     void pub_func(pcl::PointCloud<PointType> &pl, ros::Publisher pub, const ros::Time &ct);
@@ -154,6 +181,7 @@ private:
     pcl::PointCloud<PointT>::ConstPtr outlier_removal(const pcl::PointCloud<PointT>::ConstPtr& cloud) const;
     static bool time_list_ouster(ouster_ros::Point &point_1, ouster_ros::Point &point_2) {return (point_1.t < point_2.t);}
     static bool time_list_hesai(hesai_ros::Point &point_1, hesai_ros::Point &point_2) {return (point_1.timestamp < point_2.timestamp);}
+    static bool time_list_livox_pc2(livox_pc2::Point &point_1, livox_pc2::Point &point_2) {return (point_1.timestamp < point_2.timestamp);}
     static bool time_list_avia(PointType &point_1, PointType &point_2) {return (point_1.curvature < point_2.curvature);}
 
     

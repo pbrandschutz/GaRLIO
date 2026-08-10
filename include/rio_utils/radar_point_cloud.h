@@ -62,6 +62,33 @@ POINT_CLOUD_REGISTER_POINT_STRUCT
     (double, timestamp,timestamp)
 )
 
+// Point type matching the sensor_msgs/PointCloud2 layout published by the
+// Bosch OHW (off_highway_premium_radar) driver on the "locations" topic.
+struct BoschRadarPointType
+{
+  PCL_ADD_POINT4D      // x,y,z position in [m]
+  float radial_distance;
+  float radial_velocity;
+  float azimuth_angle;
+  float elevation_angle;
+  float radar_cross_section;
+  float signal_noise_ratio;
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+POINT_CLOUD_REGISTER_POINT_STRUCT
+(
+    BoschRadarPointType,
+    (float, x, x)
+    (float, y, y)
+    (float, z, z)
+    (float, radial_distance, radial_distance)
+    (float, radial_velocity, radial_velocity)
+    (float, azimuth_angle, azimuth_angle)
+    (float, elevation_angle, elevation_angle)
+    (float, radar_cross_section, radar_cross_section)
+    (float, signal_noise_ratio, signal_noise_ratio)
+)
+
 struct RadarPointCloudType
 {
   PCL_ADD_POINT4D      // x,y,z position in [m]

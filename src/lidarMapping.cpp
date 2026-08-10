@@ -598,8 +598,8 @@ bool calc_overlap(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud1,
 
 // Radar Lidar Scan Synchronization
 bool sync_messages(MeasureGroup &meas) {
-	
-    if (imuBuf.empty() || radarBuf.empty() || timeBuf.empty() || point_buffer.empty()){
+
+    if (imuBuf.empty() || radarBuf.empty() || timeBuf.empty() || point_buffer.empty() || radar_outlier_Buf.empty()){
 		return false;
 	}
 
@@ -617,9 +617,13 @@ bool sync_messages(MeasureGroup &meas) {
     {
         timeBuf.pop_front();
         radarBuf.pop_front();
+		if (radar_outlier_Buf.empty()) {
+			return false;
+		}
 		radar_outlier_Buf.pop_front();
-        if (imuBuf.empty() || radarBuf.empty() || timeBuf.empty() || point_buffer.empty())
+        if (imuBuf.empty() || radarBuf.empty() || timeBuf.empty() || point_buffer.empty() || radar_outlier_Buf.empty()) {
             return false;
+		}
     }
 	
     meas.imu.clear();

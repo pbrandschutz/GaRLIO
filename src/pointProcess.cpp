@@ -66,6 +66,10 @@ PointProcess::PointProcess()
         subPoints = nh.subscribe<sensor_msgs::PointCloud2>(lidar_topic, 1000, &PointProcess::hesai_handler, this, ros::TransportHints().tcpNoDelay());
         break;
 
+    case LIVOX_PC2:
+        subPoints = nh.subscribe<sensor_msgs::PointCloud2>(lidar_topic, 1000, &PointProcess::livox_pc2_handler, this, ros::TransportHints().tcpNoDelay());
+        break;
+
     default:
         printf("Error LiDAR Type.\n");
         break;
@@ -77,6 +81,9 @@ PointProcess::PointProcess()
             break;
         case OCULII_2:
             subRadPoints = nh.subscribe<sensor_msgs::PointCloud2>(radar_topic, 1000, &PointProcess::radar_handler2, this, ros::TransportHints().tcpNoDelay());
+            break;
+        case BOSCH:
+            subRadPoints = nh.subscribe<sensor_msgs::PointCloud2>(radar_topic, 1000, &PointProcess::radar_handler3, this, ros::TransportHints().tcpNoDelay());
             break;
         default:
             printf("Error Radar Type.\n");
@@ -359,6 +366,102 @@ void PointProcess::radar_handler2(const sensor_msgs::PointCloud2::ConstPtr &msg)
 }
 
 
+void PointProcess::radar_handler3(const sensor_msgs::PointCloud2::ConstPtr &msg)
+{
+    // Bosch OHW (off_highway_premium_radar) radar: the driver publishes
+    // PointCloud2 with sensor-specific field names (radial_velocity,
+    // radar_cross_section, signal_noise_ratio, ...) instead of the
+    // Eagle-style Doppler/Power fields used by radar_handler2. Map them onto
+    // the common RadarPointCloudType (x, y, z, intensity, doppler) used
+    // downstream by the ego-velocity estimator.
+    RadarPointCloudType radarpoint_raw;
+    PointT radarpoint_xyzi;
+    pcl::PointCloud<RadarPointCloudType>::Ptr radarcloud_raw(new pcl::PointCloud<RadarPointCloudType>);
+    pcl::PointCloud<BoschRadarPointType>::Ptr radarcloud_msg(new pcl::PointCloud<BoschRadarPointType>);
+
+    pcl::fromROSMsg(*msg, *radarcloud_msg);
+
+    pcl::PointCloud<PointT>::Ptr radarcloud_xyzi(new pcl::PointCloud<PointT>);
+
+    radarcloud_xyzi->header.frame_id = msg->header.frame_id;
+    radarcloud_xyzi->header.seq = msg->header.seq;
+    radarcloud_xyzi->header.stamp = msg->header.stamp.toSec() * 1e6;
+    for (int i = 0; i < radarcloud_msg->points.size(); i++)
+    {
+    if (radarcloud_msg->points[i].signal_noise_ratio > power_threshold)
+        {
+            if (radarcloud_msg->points[i].x == NAN || radarcloud_msg->points[i].y == NAN || radarcloud_msg->points[i].z == NAN)
+                continue;
+            if (radarcloud_msg->points[i].x == INFINITY || radarcloud_msg->points[i].y == INFINITY || radarcloud_msg->points[i].z == INFINITY)
+                continue;
+            cv::Mat ptMat, dstMat;
+            ptMat = (cv::Mat_<double>(4, 1) << radarcloud_msg->points[i].x, radarcloud_msg->points[i].y, radarcloud_msg->points[i].z, 1);
+            dstMat = ptMat;
+            radarpoint_raw.x = dstMat.at<double>(0, 0);
+            radarpoint_raw.y = dstMat.at<double>(1, 0);
+            radarpoint_raw.z = dstMat.at<double>(2, 0);
+            radarpoint_raw.intensity = radarcloud_msg->points[i].signal_noise_ratio;
+            radarpoint_raw.doppler = radarcloud_msg->points[i].radial_velocity;
+            radarpoint_xyzi.x = dstMat.at<double>(0, 0);
+            radarpoint_xyzi.y = dstMat.at<double>(1, 0);
+            radarpoint_xyzi.z = dstMat.at<double>(2, 0);
+            radarpoint_xyzi.intensity = radarcloud_msg->points[i].signal_noise_ratio;
+
+            radarcloud_raw->points.push_back(radarpoint_raw);
+            radarcloud_xyzi->points.push_back(radarpoint_xyzi);
+        }
+    }
+
+    //********** Publish PointCloud2 Format Raw Cloud **********
+    sensor_msgs::PointCloud2 pc2_raw_msg;
+    pcl::toROSMsg(*radarcloud_raw, pc2_raw_msg);
+
+    pc2_raw_msg.header = msg->header;
+    radar_raw_pub.publish(pc2_raw_msg);
+
+    //********** Ego Velocity Estimation **********
+    Eigen::Vector3d v_r, sigma_v_r;
+    sensor_msgs::PointCloud2 inlier_radar_msg, outlier_radar_msg;
+    clock_t start_ms = clock();
+    if (estimator.estimate(pc2_raw_msg, v_r, sigma_v_r, inlier_radar_msg, outlier_radar_msg))
+    {
+        clock_t end_ms = clock();
+        double time_used = double(end_ms - start_ms) / CLOCKS_PER_SEC;
+        egovel_time.push_back(time_used);
+
+        geometry_msgs::TwistWithCovarianceStamped twist;
+        twist.header.stamp = pc2_raw_msg.header.stamp;
+        twist.twist.twist.linear.x = v_r.x();
+        twist.twist.twist.linear.y = v_r.y();
+        twist.twist.twist.linear.z = v_r.z();
+
+        twist.twist.covariance.at(0) = std::pow(sigma_v_r.x(), 2);
+        twist.twist.covariance.at(7) = std::pow(sigma_v_r.y(), 2);
+        twist.twist.covariance.at(14) = std::pow(sigma_v_r.z(), 2);
+
+        pub_twist.publish(twist);
+        pub_inlier_pc2.publish(inlier_radar_msg);
+        pub_outlier_pc2.publish(outlier_radar_msg);
+    }
+    else
+    {
+        ;
+    }
+    pcl::PointCloud<RadarPointCloudType>::Ptr radarcloud_inlier(new pcl::PointCloud<RadarPointCloudType>);
+    pcl::fromROSMsg(inlier_radar_msg, *radarcloud_inlier);
+
+    pcl::PointCloud<RadarPointCloudType>::ConstPtr src_cloud;
+    src_cloud = radarcloud_inlier;
+    if (src_cloud->empty())
+    {
+        return;
+    }
+
+
+    pcl::PointCloud<RadarPointCloudType>::ConstPtr filtered = distance_filter(src_cloud);
+    points_pub.publish(*filtered);
+}
+
 void PointProcess::avia_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
 {
     pl_surf.clear();
@@ -524,6 +627,18 @@ void PointProcess::hesai_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
         }
     }
     else {
+        // The raw per-point 'timestamp' field is an absolute epoch value whose
+        // unit is given by preprocess/timestamp_unit (it need not match msg->header.stamp,
+        // which is always seconds). Convert it to seconds first so the delta against
+        // header.stamp is computed in matching units, then store as milliseconds.
+        double to_sec_scale;
+        switch (time_uint) {
+            case SEC: to_sec_scale = 1.0; break;
+            case MS:  to_sec_scale = 1.e-3; break;
+            case US:  to_sec_scale = 1.e-6; break;
+            case NS:  to_sec_scale = 1.e-9; break;
+            default:  to_sec_scale = 1.0; break;
+        }
         for (int i = 0; i < pl_orig.points.size(); i++) {
             if (i % point_filter_num != 0) continue;
 
@@ -539,7 +654,107 @@ void PointProcess::hesai_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
             added_pt.normal_x = 0;
             added_pt.normal_y = 0;
             added_pt.normal_z = 0;
-            added_pt.curvature = (pl_orig.points[i].timestamp-msg->header.stamp.toSec()) * time_unit_scale; // curvature unit: ms
+            double point_time_sec = pl_orig.points[i].timestamp * to_sec_scale;
+            added_pt.curvature = (point_time_sec - msg->header.stamp.toSec()) * 1000.0; // curvature unit: ms
+            pl_surf.points.push_back(added_pt);
+        }
+    }
+    pub_func(pl_surf, pubSurf, msg->header.stamp);
+}
+
+void PointProcess::livox_pc2_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
+{
+    // Livox drivers (e.g. Mid360) publishing sensor_msgs/PointCloud2 use
+    // x,y,z,intensity,tag,line,timestamp fields. There is no 'ring' field
+    // (Velodyne/Hesai convention), so 'line' is used instead when feature
+    // extraction (scan-line based) is enabled. The per-point 'timestamp'
+    // field is an absolute epoch value whose unit is given by
+    // preprocess/timestamp_unit (it need not match msg->header.stamp, which
+    // is always seconds).
+    pl_surf.clear();
+    pl_corn.clear();
+    pl_full.clear();
+    std::vector<pcl::PointCloud<PointType>> pl_buff(N_SCANS);
+    std::vector<std::vector<orgtype>> typess(N_SCANS);
+
+    pcl::PointCloud<livox_pc2::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    int plsize = pl_orig.size();
+    pl_corn.reserve(plsize);
+    pl_surf.reserve(plsize);
+    std::sort(pl_orig.points.begin(), pl_orig.points.end(), time_list_livox_pc2);
+
+    double to_sec_scale;
+    switch (time_uint) {
+        case SEC: to_sec_scale = 1.0; break;
+        case MS:  to_sec_scale = 1.e-3; break;
+        case US:  to_sec_scale = 1.e-6; break;
+        case NS:  to_sec_scale = 1.e-9; break;
+        default:  to_sec_scale = 1.0; break;
+    }
+
+    if (feature_enabled) {
+        for (int i = 0; i < N_SCANS; i++) {
+            pl_buff[i].reserve(plsize);
+        }
+
+        for (uint i = 0; i < plsize; i++) {
+            double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y + 
+                           pl_orig.points[i].z * pl_orig.points[i].z;
+            if (range < (blind * blind)) continue;
+
+            PointType added_pt;
+            added_pt.x = pl_orig.points[i].x;
+            added_pt.y = pl_orig.points[i].y;
+            added_pt.z = pl_orig.points[i].z;
+            added_pt.intensity = pl_orig.points[i].intensity;
+            added_pt.normal_x = 0;
+            added_pt.normal_y = 0;
+            added_pt.normal_z = 0;
+
+            double point_time_sec = pl_orig.points[i].timestamp * to_sec_scale;
+            added_pt.curvature = (point_time_sec - msg->header.stamp.toSec()) * 1000.0; // curvature unit: ms
+            if (pl_orig.points[i].line < N_SCANS) {
+                pl_buff[pl_orig.points[i].line].push_back(added_pt);
+            }
+        }
+
+        for (int j = 0; j < N_SCANS; j++) {
+            pcl::PointCloud<PointType> &pl = pl_buff[j];
+            int linesize = pl.size();
+            std::vector<orgtype> &types = typess[j];
+            types.clear();
+            types.resize(linesize);
+            linesize--;
+            for (uint i = 0; i < linesize; i++) {
+                types[i].range = std::sqrt(pl[i].x * pl[i].x + pl[i].y * pl[i].y);
+                vx = pl[i].x - pl[i + 1].x;
+                vy = pl[i].y - pl[i + 1].y;
+                vz = pl[i].z - pl[i + 1].z;
+                types[i].dista = vx * vx + vy * vy + vz * vz;
+            }
+            types[linesize].range = std::sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
+            give_feature(pl, types, pl_surf, pl_corn);
+        }
+    }
+    else {
+        for (int i = 0; i < pl_orig.points.size(); i++) {
+            if (i % point_filter_num != 0) continue;
+
+            double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y + 
+                           pl_orig.points[i].z * pl_orig.points[i].z;  
+            if (range < (blind * blind)) continue;
+            
+            PointType added_pt;
+            added_pt.x = pl_orig.points[i].x;
+            added_pt.y = pl_orig.points[i].y;
+            added_pt.z = pl_orig.points[i].z;
+            added_pt.intensity = pl_orig.points[i].intensity;
+            added_pt.normal_x = 0;
+            added_pt.normal_y = 0;
+            added_pt.normal_z = 0;
+            double point_time_sec = pl_orig.points[i].timestamp * to_sec_scale;
+            added_pt.curvature = (point_time_sec - msg->header.stamp.toSec()) * 1000.0; // curvature unit: ms
             pl_surf.points.push_back(added_pt);
         }
     }
