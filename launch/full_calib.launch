@@ -1,6 +1,6 @@
 <launch>
     
-    <rosparam command="load" file="$(find garlio)/config/custom.yaml" />
+    <rosparam command="load" file="$(find garlio)/config/full_calib.yaml" />
 
     <node pkg="garlio" type="cloudProcess" name="pointProcess" output="screen" />
 

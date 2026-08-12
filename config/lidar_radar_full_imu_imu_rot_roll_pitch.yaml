@@ -1,0 +1,72 @@
+common:
+    lid_topic:  "/raupi/livox_mid360/x_x_x_194/points" # subscriber
+    imu_topic:  "/raupi/xsens_mti630r/imu" # subscriber
+    radar_topic : "/raupi/bosch_ohw_front/locations" # subscriber
+    topic_twist : "/eagle_data/twist" # publisher
+    topic_inlier_pc2 : "/eagle_data/inlier_pc2" # publisher
+    topic_outlier_pc2 : "/eagle_data/outlier_pc2" # publisher
+
+threshold:
+    power_threshold: 0
+    distance_near_thresh : 2
+    distance_far_thresh : 100
+    z_low_thresh : -1
+    z_high_thresh : 100
+    downsample_method : "VOXELGRID"   #VOXELGRID or APPROX_VOXELGRID or NONE
+    downsample_resolution : 0.1
+    outlier_removal_method : "RADIUS" #"STATISTICAL" or "RADIUS" or "NONE"
+    statistical_mean_k : 30
+    statistical_stddev : 1.2
+    radius_radius : 0.5
+    radius_min_neighbors : 1
+
+cov :
+    LASER_POINT_COV : 0.0005
+    VELOCITY_COV : 0.5
+    GRAVITY_COV : 0.002
+    
+    
+preprocess:
+    lidar_type: 2          # 0-AVIA(CustomMsg), 1-HEASI/Velodyne-style PointCloud2 (needs 'ring'), 2-Livox PointCloud2 (Mid360, no 'ring' field)          
+    radar_type : 2
+    n_scans: 32
+    timestamp_unit: 3       # the unit of time/t field in the PointCloud2 rostopic: 0-second, 1-milisecond, 2-microsecond, 3-nanosecond. Livox Mid360 publishes absolute epoch nanoseconds here.
+    feature_enabled: 0
+    point_filter_num: 4
+    blind: 4
+
+mapping:
+    # loss_threshold: 1000
+    max_iteration: 4
+    cube_side_length: 1000.0
+    filter_size_surf: 0.5           
+    filter_size_map: 0.5           
+    acc_noise: 0.1
+    gyr_noise: 0.1
+    acc_bias_noise: 0.0001
+    gyr_bias_noise: 0.0001
+    fov_degree: 180
+    det_range: 150.0
+    extrinsic_est_en: false      # true: enable the online estimation of IMU-LiDAR extrinsic
+    extrinsic_t_il: [8.60857874e-02, 4.53977629e-02, 3.65536129e-02] 
+    extrinsic_R_il: [ 9.65153700e-01, -5.74300000e-04,  2.61683000e-01,
+                      -5.74300000e-04,  9.99990500e-01,  4.31250000e-03,
+                     -2.61683000e-01, -4.31250000e-03,  9.65144200e-01 ]
+
+
+    extrinsic_T_ri: [ 9.99752142e-0,   2.45271940e-04,  2.22638361e-02, -4.13762211e-02,
+                     -2.40901973e-04,  9.99999958e-01, -1.95670109e-04,  6.98877922e-02,
+                     -2.22638835e-02,  1.90257606e-04,  9.99752189e-01, -4.53784808e-02,
+                      0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
+
+    extrinsic_T_rl : [ 9.59088271e-01, -4.24900838e-04,  2.83107010e-01,  4.63352772e-02,
+                      -7.55603866e-04,  9.99991440e-01,  4.06061000e-03,  1.15056008e-01,
+                      -2.83106331e-01, -4.10838937e-03,  9.59079767e-01, -1.08698347e-02,
+                       0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
+
+
+pcd_save:
+    pcd_save_en: false
+    interval: -1                 # how many LiDAR frames saved in each pcd file; 
+                                 # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+    traj_save_path: /home/vdcl/Downloads/PCD
